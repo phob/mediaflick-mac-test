@@ -30,4 +30,4 @@ for file in "$@"; do
   sudo cp "$file" "$desktop/"
 done
 sudo chown -R "$user:staff" "$desktop"
-ls -l "$desktop"
+sudo ls -l "$desktop"

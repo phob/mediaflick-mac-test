@@ -72,8 +72,8 @@ sooner, cancel the run: the run page's **Cancel workflow** button, or
 deleted with the runner, and the ephemeral Tailscale node disappears from your
 tailnet shortly after.
 
-Do not log out of, restart or shut down the Mac from the desktop: the runner
-would lose its session or go away.
+Logging out of `tester` is harmless: connect again and a new session starts.
+Restarting or shutting down the Mac ends the session for good.
 
 ## Limits
 
