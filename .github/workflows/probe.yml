@@ -9,20 +9,39 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
-      - name: Interfaces
-        run: ifconfig | grep -E '^[a-z]|inet ' ; curl -s --max-time 10 https://api.ipify.org; echo
+      - name: Facts
+        run: |
+          dscl . -list /Users RealName | grep -v '^_'
+          dscl . -read /Users/runner RealName UniqueID
+          lockstate() { ioreg -n Root -d1 -a | plutil -extract IOConsoleUsers xml1 -o - - | grep -A1 -E 'CGSSessionScreenIsLocked|kCGSSessionOnConsoleKey|kCGSSessionUserNameKey|kCGSessionLoginDoneKey' | tr -d '\t\n'; echo; }
+          declare -f lockstate > "$RUNNER_TEMP/lockstate.sh"
+          lockstate
+          mkdir -p shots; screencapture -x shots/0-local-before.png
       - name: Enable screen sharing
         run: |
           pw="$(openssl rand -base64 24 | tr -dc 'A-Za-z0-9' | head -c 8)"
           echo "::add-mask::$pw"
           echo "VNC_PASSWORD=$pw" >> "$GITHUB_ENV"
           VNC_PASSWORD="$pw" scripts/enable-screen-sharing.sh
-          sudo pfctl -s rules 2>/dev/null | tail -5
-      - name: Check over VNC
+          . "$RUNNER_TEMP/lockstate.sh"; lockstate
+          screencapture -x shots/0-local-after-enable.png
+      - name: Legacy VNC
         run: |
           python3 -m venv "$RUNNER_TEMP/vnc"
           "$RUNNER_TEMP/vnc/bin/pip" install --quiet --disable-pip-version-check vncdotool==1.4.2 pillow==13.0.0
-          "$RUNNER_TEMP/vnc/bin/python" scripts/vnc-check.py shots
+          "$RUNNER_TEMP/vnc/bin/python" scripts/vnc-check.py shots/legacy || true
+          . "$RUNNER_TEMP/lockstate.sh"; lockstate
+          screencapture -x shots/0-local-after-legacy.png
+      - name: Apple auth as runner
+        run: |
+          upw="$(openssl rand -base64 32 | tr -dc 'A-Za-z0-9' | head -c 20)"
+          echo "::add-mask::$upw"
+          sudo dscl . -passwd /Users/runner "$upw"
+          dscl . -authonly runner "$upw" && echo "runner password set"
+          security show-keychain-info ~/Library/Keychains/login.keychain-db 2>&1 || true
+          "$RUNNER_TEMP/vnc/bin/vncdo" -s 127.0.0.1::5900 -u runner -p "$upw" pause 2 capture shots/ard-1.png move 20 10 click 1 pause 2 capture shots/ard-2.png key esc pause 1 capture shots/ard-3.png || echo "ard failed"
+          . "$RUNNER_TEMP/lockstate.sh"; lockstate
+          screencapture -x shots/0-local-after-ard.png
       - uses: actions/upload-artifact@v7
         if: always()
         with:
