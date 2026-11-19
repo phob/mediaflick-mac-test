@@ -8,59 +8,21 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 30
     steps:
-      - name: Facts
-        run: |
-          sw_vers; uname -m
-          csrutil status || true
-          echo "console: $(stat -f '%Su' /dev/console)"
-          security show-keychain-info ~/Library/Keychains/login.keychain-db 2>&1 || true
-          security list-keychains; security default-keychain
-          sudo sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" "PRAGMA table_info(access);" | cut -d'|' -f2 | tr '\n' ' '; echo
-          sudo sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" "SELECT service,client,auth_value FROM access;" || true
-          system_profiler SPDisplaysDataType | head -30
-          defaults -currentHost read com.apple.screensaver 2>&1 || true
-          sysadminctl -screenLock status 2>&1 || true
-      - name: Grant TCC to screen sharing
-        run: |
-          db="/Library/Application Support/com.apple.TCC/TCC.db"
-          now=$(date +%s)
-          for svc in kTCCServiceScreenCapture kTCCServicePostEvent kTCCServiceAccessibility; do
-            for c in com.apple.screensharing.agent com.apple.RemoteDesktopAgent; do
-              sudo sqlite3 "$db" "INSERT OR REPLACE INTO access (service,client,client_type,auth_value,auth_reason,auth_version,indirect_object_identifier,flags,last_modified) VALUES ('$svc','$c',0,2,4,1,'UNUSED',0,$now);" && echo "ok $svc $c" || echo "FAIL $svc $c"
-            done
-          done
+      - uses: actions/checkout@v7
+      - name: Interfaces
+        run: ifconfig | grep -E '^[a-z]|inet ' ; curl -s --max-time 10 https://api.ipify.org; echo
       - name: Enable screen sharing
         run: |
-          pw="$(openssl rand -base64 12 | tr -dc 'A-Za-z0-9' | head -c 8)"
+          pw="$(openssl rand -base64 24 | tr -dc 'A-Za-z0-9' | head -c 8)"
           echo "::add-mask::$pw"
-          echo "PW=$pw" >> "$GITHUB_ENV"
-          ks=/System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart
-          sudo "$ks" -activate -configure -access -on -privs -all -allowAccessFor -allUsers \
-            -clientopts -setvnclegacy -vnclegacy yes -setvncpw -vncpw "$pw" -restart -agent -menu
-          sudo launchctl enable system/com.apple.screensharing || true
-          sudo launchctl bootstrap system /System/Library/LaunchDaemons/com.apple.screensharing.plist 2>&1 || true
-          for i in $(seq 1 20); do sudo lsof -nP -iTCP:5900 -sTCP:LISTEN && break; sleep 2; done
-          ps aux | grep -iE 'screenshar|ARDAgent|VNC' | grep -v grep || true
-      - name: Capture over VNC
+          echo "VNC_PASSWORD=$pw" >> "$GITHUB_ENV"
+          VNC_PASSWORD="$pw" scripts/enable-screen-sharing.sh
+          sudo pfctl -s rules 2>/dev/null | tail -5
+      - name: Check over VNC
         run: |
-          python3 -m venv /tmp/v; /tmp/v/bin/pip -q install vncdotool pillow
-          mkdir -p shots
-          /tmp/v/bin/vncdo -s 127.0.0.1::5900 -p "$PW" capture shots/1.png || echo capture1 failed
-          osascript -e 'tell application "TextEdit" to activate' || true
-          sleep 3
-          /tmp/v/bin/vncdo -s 127.0.0.1::5900 -p "$PW" move 30 10 click 1 pause 1 capture shots/2.png || echo capture2 failed
-          /tmp/v/bin/vncdo -s 127.0.0.1::5900 -p "$PW" key esc type "hello from vnc" pause 1 capture shots/3.png || echo capture3 failed
-          screencapture -x shots/local.png || true
-          for f in shots/*.png; do /tmp/v/bin/python - "$f" <<'PY'
-          import sys
-          from PIL import Image
-          im = Image.open(sys.argv[1]).convert("RGB")
-          px = im.getdata()
-          nb = sum(1 for p in px if max(p) > 12)
-          print(sys.argv[1], im.size, f"{100*nb/len(px):.1f}% non-black")
-          PY
-          done
-          log show --last 3m --predicate 'process == "tccd"' 2>/dev/null | grep -i screensharing | tail -20 || true
+          python3 -m venv "$RUNNER_TEMP/vnc"
+          "$RUNNER_TEMP/vnc/bin/pip" install --quiet --disable-pip-version-check vncdotool==1.4.2 pillow==13.0.0
+          "$RUNNER_TEMP/vnc/bin/python" scripts/vnc-check.py shots
       - uses: actions/upload-artifact@v7
         if: always()
         with:
