@@ -17,40 +17,35 @@ jobs:
           echo "MAC_PASSWORD=$pw" >> "$GITHUB_ENV"
           MAC_PASSWORD="$pw" scripts/create-test-user.sh
           MAC_PASSWORD="$pw" scripts/enable-screen-sharing.sh
-      - name: Check over VNC
+      - name: Apple auth
         run: |
           python3 -m venv "$RUNNER_TEMP/vnc"
           "$RUNNER_TEMP/vnc/bin/pip" install --quiet --disable-pip-version-check vncdotool==1.4.2 pillow==13.0.0
-          "$RUNNER_TEMP/vnc/bin/python" scripts/vnc-check.py shots
+          mkdir -p shots
+          "$RUNNER_TEMP/vnc/bin/python" - <<'PY'
+          import os
+          from vncdotool import api
+          for attempt in (1, 2):
+              c = api.connect("127.0.0.1::5900", username="tester", password=os.environ["MAC_PASSWORD"], timeout=90)
+              c.pause(20 if attempt == 1 else 3)
+              c.captureScreen(f"shots/{attempt}-a-connected.png")
+              c.mouseMove(20, 10)
+              c.mousePress(1)
+              c.pause(2)
+              c.captureScreen(f"shots/{attempt}-b-menu.png")
+              c.keyPress("esc")
+              c.pause(2)
+              c.captureScreen(f"shots/{attempt}-c-esc.png")
+              c.disconnect()
+              print("attempt", attempt, "done")
+          api.shutdown()
+          PY
       - name: Sessions
-        if: always()
-        run: defaults read ~/Library/Preferences/com.apple.SetupAssistant.plist || true
-      - name: Sessions2
         if: always()
         run: |
           ioreg -n Root -d1 -a | plutil -extract IOConsoleUsers xml1 -o - - | grep -A1 -E 'kCGSSessionOnConsoleKey|kCGSSessionUserNameKey|kCGSessionLoginDoneKey' | tr -d '\t\n'; echo
-          security list-keychains 2>&1 || true
-          sudo ls -la /Users/tester/Library/Keychains 2>&1 || true
       - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: probe-shots
-          path: shots
-      - name: Reconnect
-        if: always()
-        run: |
-          "$RUNNER_TEMP/vnc/bin/python" - <<'PY'
-          import os
-          from vncdotool import api, rfb
-          rfb.RFBClient.SUPPORTED_AUTHS = {rfb.AuthTypes.VNC_AUTHENTICATION}
-          c = api.connect("127.0.0.1::5900", password=os.environ["MAC_PASSWORD"], timeout=60)
-          c.pause(3)
-          c.captureScreen("shots/5-reconnected.png")
-          c.disconnect()
-          api.shutdown()
-          PY
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: probe-shots-2
           path: shots
