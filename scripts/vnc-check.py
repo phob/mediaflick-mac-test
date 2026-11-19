@@ -29,6 +29,11 @@ def changed_share(before: Image.Image, after: Image.Image, area: tuple[int, int,
     return sum(1 for value in pixels if value > 24) / len(pixels)
 
 
+def type_text(client: api.ThreadedVNCClientProxy, text: str) -> None:
+    for character in text:
+        client.keyPress(character)
+
+
 def main() -> int:
     output = Path(sys.argv[1])
     output.mkdir(parents=True, exist_ok=True)
@@ -40,9 +45,12 @@ def main() -> int:
     try:
         client.pause(3)
         client.captureScreen(str(shots[0]))
-        client.type("tester")
+        # The Name field of the login window.
+        client.mouseMove(512, 652)
+        client.mousePress(1)
+        type_text(client, "tester")
         client.keyPress("tab")
-        client.type(password)
+        type_text(client, password)
         client.keyPress("enter")
         client.pause(30)
         client.mouseMove(700, 400)
