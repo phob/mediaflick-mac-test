@@ -52,9 +52,14 @@ def main() -> int:
         client.keyPress("tab")
         type_text(client, password)
         client.keyPress("enter")
-        client.pause(30)
         client.mouseMove(700, 400)
-        client.pause(1)
+        login = Image.open(shots[0])
+        for _ in range(24):
+            client.pause(5)
+            client.captureScreen(str(shots[1]))
+            if changed_share(login, Image.open(shots[1]), WHOLE_SCREEN) > 0.05:
+                break
+        client.pause(5)
         client.captureScreen(str(shots[1]))
         client.mouseMove(20, 10)
         client.mousePress(1)

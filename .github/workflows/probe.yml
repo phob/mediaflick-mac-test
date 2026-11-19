@@ -24,6 +24,9 @@ jobs:
           "$RUNNER_TEMP/vnc/bin/python" scripts/vnc-check.py shots
       - name: Sessions
         if: always()
+        run: defaults read ~/Library/Preferences/com.apple.SetupAssistant.plist || true
+      - name: Sessions2
+        if: always()
         run: |
           ioreg -n Root -d1 -a | plutil -extract IOConsoleUsers xml1 -o - - | grep -A1 -E 'kCGSSessionOnConsoleKey|kCGSSessionUserNameKey|kCGSessionLoginDoneKey' | tr -d '\t\n'; echo
           security list-keychains 2>&1 || true
