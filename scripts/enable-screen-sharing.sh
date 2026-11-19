@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Turns on macOS Screen Sharing with full control of the logged-in runner
 # session, reachable only from loopback and the Tailscale network.
-# Needs VNC_PASSWORD in the environment (macOS uses its first 8 characters).
+# Needs MAC_PASSWORD in the environment; legacy VNC uses its first 8 characters.
 set -euo pipefail
-: "${VNC_PASSWORD:?VNC_PASSWORD is not set}"
+: "${MAC_PASSWORD:?MAC_PASSWORD is not set}"
 
 # Since macOS 12.1 kickstart cannot grant Screen Recording, so the agent would
 # serve a black screen. The runner image has SIP disabled, so pre-approve the
@@ -28,7 +28,7 @@ sudo pfctl -q -E 2>/dev/null || true
 
 kickstart=/System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart
 sudo "$kickstart" -activate -configure -access -on -privs -all -allowAccessFor -allUsers \
-  -clientopts -setvnclegacy -vnclegacy yes -setvncpw -vncpw "$VNC_PASSWORD" \
+  -clientopts -setvnclegacy -vnclegacy yes -setvncpw -vncpw "${MAC_PASSWORD:0:8}" \
   -restart -agent -menu >/dev/null
 
 # The runner account's password is unknown, so a locked screen could never be
