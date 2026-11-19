@@ -20,16 +20,22 @@ on:
         default: "6"
         options: ["1", "2", "3", "4", "5", "6"]
       self_test:
-        description: Self-test only - throwaway password, no Tailscale, upload screenshots and end
+        description: Self-test only - launch both apps, throwaway password, no Tailscale, upload evidence and end
         type: boolean
         default: false
+      build_run_id:
+        description: Reuse the DMG an earlier run of this workflow built (its run id) instead of building ref
+        type: string
+        default: ""
 
 permissions:
   contents: read
+  actions: read # download a build_run_id run's DMG
 
 jobs:
   build:
     name: Build ${{ inputs.ref }}
+    if: ${{ inputs.build_run_id == '' }}
     runs-on: macos-15
     timeout-minutes: 120
 
@@ -109,6 +115,7 @@ jobs:
   session:
     name: macOS desktop
     needs: build
+    if: ${{ !cancelled() && (needs.build.result == 'success' || needs.build.result == 'skipped') }}
     runs-on: macos-15
     # GitHub stops any job after 6 hours; the session ends itself before that.
     timeout-minutes: 360
@@ -147,6 +154,8 @@ jobs:
         with:
           name: build-dmg
           path: ${{ runner.temp }}/dmg
+          run-id: ${{ inputs.build_run_id || github.run_id }}
+          github-token: ${{ github.token }}
 
       - name: Download the release
         env:
@@ -154,7 +163,12 @@ jobs:
           RELEASE: ${{ inputs.release }}
         run: gh release download "$RELEASE" -R phob/MediaFlick-Desktop -p '*-macos-arm64.dmg' -D "$RUNNER_TEMP/dmg"
 
-      - name: Check both apps start
+      # MediaFlick plays through an external mpv on macOS.
+      - name: Install mpv
+        run: brew install mpv
+
+      - name: Check both apps print their version
+        if: ${{ !inputs.self_test }}
         run: |
           for dmg in "$RUNNER_TEMP"/dmg/*.dmg; do
             mount_point="$(mktemp -d)"
@@ -163,9 +177,24 @@ jobs:
             hdiutil detach "$mount_point" >/dev/null
           done
 
-      # MediaFlick plays through an external mpv on macOS.
-      - name: Install mpv
-        run: brew install mpv
+      # Installs each app to /Applications, opens it, runs its binary from a
+      # shell and under lldb, and checks it stays up with a window. Its
+      # verdict fails the run at the end, after the other checks and uploads.
+      - name: Launch both apps
+        id: launch
+        if: ${{ inputs.self_test }}
+        continue-on-error: true
+        run: |
+          scripts/launch-check.sh "$RUNNER_TEMP/launch-check" "$RUNNER_TEMP"/dmg/*.dmg
+          sudo rm -rf "/Applications/MediaFlick Desktop.app"
+
+      - name: Upload launch evidence
+        if: ${{ always() && inputs.self_test }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: launch-check
+          path: ${{ runner.temp }}/launch-check
+          if-no-files-found: ignore
 
       - name: Create the tester account
         run: scripts/create-test-user.sh "$RUNNER_TEMP"/dmg/*.dmg
@@ -186,6 +215,13 @@ jobs:
           name: self-test-screenshots
           path: ${{ runner.temp }}/screenshots
           if-no-files-found: ignore
+
+      - name: Fail if an app did not stay up
+        if: ${{ inputs.self_test && steps.launch.outcome != 'success' }}
+        run: |
+          cat "$RUNNER_TEMP/launch-check/summary.txt"
+          echo "::error::A MediaFlick app did not stay up with a window; see the launch-check artifact."
+          exit 1
 
       - name: Connect to Tailscale
         if: ${{ !inputs.self_test }}
