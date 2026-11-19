@@ -53,13 +53,9 @@ def main() -> int:
         type_text(client, password)
         client.keyPress("enter")
         client.mouseMove(700, 400)
-        login = Image.open(shots[0])
-        for _ in range(24):
-            client.pause(5)
-            client.captureScreen(str(shots[1]))
-            if changed_share(login, Image.open(shots[1]), WHOLE_SCREEN) > 0.05:
-                break
-        client.pause(5)
+        # Requesting frames while the login window hands over to the new
+        # session stalls the connection, so wait the login out.
+        client.pause(45)
         client.captureScreen(str(shots[1]))
         client.mouseMove(20, 10)
         client.mousePress(1)

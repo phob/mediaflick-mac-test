@@ -36,3 +36,21 @@ jobs:
         with:
           name: probe-shots
           path: shots
+      - name: Reconnect
+        if: always()
+        run: |
+          "$RUNNER_TEMP/vnc/bin/python" - <<'PY'
+          import os
+          from vncdotool import api, rfb
+          rfb.RFBClient.SUPPORTED_AUTHS = {rfb.AuthTypes.VNC_AUTHENTICATION}
+          c = api.connect("127.0.0.1::5900", password=os.environ["MAC_PASSWORD"], timeout=60)
+          c.pause(3)
+          c.captureScreen("shots/5-reconnected.png")
+          c.disconnect()
+          api.shutdown()
+          PY
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: probe-shots-2
+          path: shots
