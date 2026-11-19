@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
-# Turns on macOS Screen Sharing with full control of the logged-in runner
-# session, reachable only from loopback and the Tailscale network.
-# Needs MAC_PASSWORD in the environment; legacy VNC uses its first 8 characters.
+# Turns on macOS Screen Sharing for the tester account only, with Apple's
+# username-and-password authentication (no 8-character VNC password), and
+# accepts connections only from loopback and the Tailscale network.
 set -euo pipefail
-: "${MAC_PASSWORD:?MAC_PASSWORD is not set}"
 
-# Since macOS 12.1 kickstart cannot grant Screen Recording, so the agent would
+# Since macOS 12.1 kickstart cannot grant Screen Recording, so the agent could
 # serve a black screen. The runner image has SIP disabled, so pre-approve the
 # Screen Sharing agent in the system TCC database instead.
 tcc_db="/Library/Application Support/com.apple.TCC/TCC.db"
@@ -23,21 +22,17 @@ done
   echo 'pass in quick on lo0 all'
   echo 'pass in quick proto tcp from 100.64.0.0/10 to any port { 5900, 3283 }'
   echo 'block drop in quick proto { tcp, udp } from any to any port { 5900, 3283 }'
-} | sudo pfctl -q -f - 2>&1 | grep -v 'ALTQ' || true
+} | sudo pfctl -q -f - 2>/dev/null
 sudo pfctl -q -E 2>/dev/null || true
 
 kickstart=/System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart
-sudo "$kickstart" -activate -configure -access -on -privs -all -allowAccessFor -allUsers \
-  -clientopts -setvnclegacy -vnclegacy yes -setvncpw -vncpw "${MAC_PASSWORD:0:8}" \
-  -restart -agent -menu >/dev/null
-
-# The runner account's password is unknown, so a locked screen could never be
-# unlocked: turn off the screensaver and display sleep that lead to the lock.
-defaults -currentHost write com.apple.screensaver idleTime -int 0
-sudo pmset -a displaysleep 0 sleep 0 >/dev/null
+sudo "$kickstart" -activate -configure -allowAccessFor -specifiedUsers >/dev/null
+sudo "$kickstart" -configure -users tester -access -on -privs -all >/dev/null
+sudo "$kickstart" -configure -clientopts -setvnclegacy -vnclegacy no >/dev/null
+sudo "$kickstart" -restart -agent -menu >/dev/null
 
 for _ in $(seq 1 30); do
-  if nc -z 127.0.0.1 5900; then
+  if nc -z 127.0.0.1 5900 2>/dev/null; then
     echo "Screen Sharing is listening on port 5900."
     exit 0
   fi

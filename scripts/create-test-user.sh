@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# Creates the admin account the operator logs into over Screen Sharing.
-# Needs MAC_PASSWORD in the environment.
+# Creates the admin account "tester" that the operator signs in as over Screen
+# Sharing, and puts the given files on its desktop. The runner's own account has
+# a password nobody knows, and a fresh account also gets a fresh login keychain.
+# Needs MAC_PASSWORD in the environment. Usage: create-test-user.sh FILE...
 set -euo pipefail
 : "${MAC_PASSWORD:?MAC_PASSWORD is not set}"
 user=tester
 
-sudo sysadminctl -addUser "$user" -fullName "MediaFlick Tester" -password "$MAC_PASSWORD" -admin 2>&1 \
-  | grep -v -e 'No clear text password' -e 'SecureToken' || true
+sudo sysadminctl -addUser "$user" -fullName "MediaFlick Tester" -password "$MAC_PASSWORD" -admin 2>/dev/null
 sudo createhomedir -c -u "$user" >/dev/null
 dscl . -authonly "$user" "$MAC_PASSWORD"
 
@@ -23,5 +24,10 @@ sudo defaults write "$prefs" LastSeenBuddyBuildVersion "$(sw_vers -buildVersion)
 sudo defaults write "$prefs" LastPrivacyBundleVersion -string 9999
 sudo chown "$user:staff" "$prefs"
 
-# Show name and password fields instead of a user list at the login window.
-sudo defaults write /Library/Preferences/com.apple.loginwindow SHOWFULLNAME -bool true
+desktop="/Users/$user/Desktop"
+sudo mkdir -p "$desktop"
+for file in "$@"; do
+  sudo cp "$file" "$desktop/"
+done
+sudo chown -R "$user:staff" "$desktop"
+ls -l "$desktop"

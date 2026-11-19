@@ -1,0 +1,209 @@
+name: macOS test session
+
+# Builds MediaFlick Desktop for macOS from source, then opens a macOS desktop
+# with that build and a released version on it, reachable over Screen Sharing
+# through Tailscale until the chosen time runs out or the run is cancelled.
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: MediaFlick Desktop branch, tag or commit to build
+        type: string
+        default: main
+      release:
+        description: Released version to put beside it (a phob/MediaFlick-Desktop release tag)
+        type: string
+        default: v0.2.0
+      hours:
+        description: Hours to keep the desktop open (cancel the run to end sooner)
+        type: choice
+        default: "6"
+        options: ["1", "2", "3", "4", "5", "6"]
+      self_test:
+        description: Self-test only - throwaway password, no Tailscale, upload screenshots and end
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ${{ inputs.ref }}
+    runs-on: macos-15
+    timeout-minutes: 120
+
+    outputs:
+      label: ${{ steps.source.outputs.label }}
+
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_TARGET_DIR: build/cargo-target
+      CEF_PATH: ${{ github.workspace }}/../mediaflick-cache/cef
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
+
+    steps:
+      - name: Check out MediaFlick Desktop
+        uses: actions/checkout@v7
+        with:
+          repository: phob/MediaFlick-Desktop
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - name: Name the build
+        id: source
+        env:
+          REF: ${{ inputs.ref }}
+        run: echo "label=${REF//\//-}@$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      # The UI bundle is embedded in the binary; build.rs shells out to pnpm.
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          package_json_file: ui/package.json
+
+      - name: Install Node toolchain
+        uses: actions/setup-node@v7
+        with:
+          node-version: 26
+          cache: pnpm
+          cache-dependency-path: ui/pnpm-lock.yaml
+
+      - name: Install UI dependencies
+        run: pnpm --dir ui install --frozen-lockfile
+
+      - name: Cache Cargo and CEF downloads
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ${{ env.CEF_PATH }}
+          key: macos-arm64-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            macos-arm64-
+
+      - name: Install macOS build dependencies
+        run: brew install cmake ninja
+
+      # The same steps as the release workflow's macOS DMG build.
+      - name: Build macOS DMG
+        env:
+          MEDIAFLICK_DESKTOP_GIT_VERSION: ${{ steps.source.outputs.label }}
+          TAG: ${{ steps.source.outputs.label }}
+        run: |
+          cargo build --release --locked --bin mediaflick-desktop
+          bash distribution/macos/build-dmg.sh
+
+      - name: Upload DMG
+        uses: actions/upload-artifact@v7
+        with:
+          name: build-dmg
+          path: dist/macos/*.dmg
+          if-no-files-found: error
+          retention-days: 1
+
+  session:
+    name: macOS desktop
+    needs: build
+    runs-on: macos-15
+    # GitHub stops any job after 6 hours; the session ends itself before that.
+    timeout-minutes: 360
+
+    steps:
+      - name: Choose the tester password
+        env:
+          SECRET_PASSWORD: ${{ secrets.MAC_PASSWORD }}
+          TS_AUTHKEY: ${{ secrets.TS_AUTHKEY }}
+          SELF_TEST: ${{ inputs.self_test }}
+        run: |
+          echo "SESSION_START=$(date +%s)" >> "$GITHUB_ENV"
+          if [[ "$SELF_TEST" == true ]]; then
+            password="$(openssl rand -base64 48 | tr -dc 'A-Za-z0-9' | head -c 24)"
+          else
+            if [[ ${#SECRET_PASSWORD} -lt 16 || "$SECRET_PASSWORD" == *$'\n'* ]]; then
+              echo "::error::Set the MAC_PASSWORD repository secret to a single line of at least 16 characters (see README)."
+              exit 1
+            fi
+            if [[ -z "$TS_AUTHKEY" ]]; then
+              echo "::error::Set the TS_AUTHKEY repository secret to a Tailscale auth key (see README)."
+              exit 1
+            fi
+            password="$SECRET_PASSWORD"
+          fi
+          echo "::add-mask::$password"
+          echo "MAC_PASSWORD=$password" >> "$GITHUB_ENV"
+
+      - name: Check out this repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Download the build
+        uses: actions/download-artifact@v8
+        with:
+          name: build-dmg
+          path: ${{ runner.temp }}/dmg
+
+      - name: Download the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE: ${{ inputs.release }}
+        run: gh release download "$RELEASE" -R phob/MediaFlick-Desktop -p '*-macos-arm64.dmg' -D "$RUNNER_TEMP/dmg"
+
+      - name: Check both apps start
+        run: |
+          for dmg in "$RUNNER_TEMP"/dmg/*.dmg; do
+            mount_point="$(mktemp -d)"
+            hdiutil attach -nobrowse -readonly -mountpoint "$mount_point" "$dmg" >/dev/null
+            echo "$(basename "$dmg"): $("$mount_point/MediaFlick Desktop.app/Contents/MacOS/mediaflick-desktop" --version)"
+            hdiutil detach "$mount_point" >/dev/null
+          done
+
+      # MediaFlick plays through an external mpv on macOS.
+      - name: Install mpv
+        run: brew install mpv
+
+      - name: Create the tester account
+        run: scripts/create-test-user.sh "$RUNNER_TEMP"/dmg/*.dmg
+
+      - name: Turn on Screen Sharing
+        run: scripts/enable-screen-sharing.sh
+
+      - name: Check the desktop over VNC
+        run: |
+          python3 -m venv "$RUNNER_TEMP/vnc"
+          "$RUNNER_TEMP/vnc/bin/pip" install --quiet --disable-pip-version-check vncdotool==1.4.2 pillow==13.0.0
+          "$RUNNER_TEMP/vnc/bin/python" -W ignore scripts/vnc-check.py "$RUNNER_TEMP/screenshots"
+
+      - name: Upload self-test screenshots
+        if: ${{ always() && inputs.self_test }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: self-test-screenshots
+          path: ${{ runner.temp }}/screenshots
+          if-no-files-found: ignore
+
+      - name: Connect to Tailscale
+        if: ${{ !inputs.self_test }}
+        uses: tailscale/github-action@v4
+        with:
+          authkey: ${{ secrets.TS_AUTHKEY }}
+          hostname: mediaflick-mac-${{ github.run_id }}
+
+      - name: Keep the desktop open
+        if: ${{ !inputs.self_test }}
+        env:
+          HOURS: ${{ inputs.hours }}
+        run: |
+          end=$(( SESSION_START + HOURS * 3600 ))
+          hard_end=$(( SESSION_START + 350 * 60 ))
+          (( end > hard_end )) && end=$hard_end
+          echo "Connect a VNC viewer to mediaflick-mac-${GITHUB_RUN_ID} ($(tailscale ip -4)) as user tester."
+          echo "The desktop stays open until $(date -u -r "$end" '+%H:%M UTC'). Cancel the run to end it sooner."
+          while (( $(date +%s) < end )); do
+            caffeinate -dims -t 60
+          done
