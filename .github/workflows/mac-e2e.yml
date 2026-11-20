@@ -16,6 +16,10 @@ on:
         description: MediaFlick Desktop ref whose verify-mediaflick harness to use
         type: string
         default: main
+      steps:
+        description: Comma-separated steps after sign-in (home, library, movie-detail, series-detail, sidebar-hover, window-chrome, playback, quit-cmd-q, quit-close-button); empty runs all but quit-close-button
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -69,10 +73,13 @@ jobs:
           hdiutil detach "$mount_point" >/dev/null
           "/Applications/MediaFlick Desktop.app/Contents/MacOS/mediaflick-desktop" --version
           swiftc -O -o "$RUNNER_TEMP/window-count" scripts/window-count.swift
+          swiftc -O -o "$RUNNER_TEMP/pointer" scripts/pointer.swift
+          echo "pointer trusted for Accessibility: $("$RUNNER_TEMP/pointer" trusted)"
 
       # Probing crashes mpv on purpose; keep macOS's "quit unexpectedly"
       # dialogs off the screen the drive's screenshots show.
       - name: Pick an mpv video output this VM survives
+        if: ${{ inputs.steps == '' || contains(inputs.steps, 'playback') }}
         run: |
           defaults write com.apple.CrashReporter DialogType none
           scripts/pick-mpv-vo.sh "$RUNNER_TEMP/evidence/mpv-vo"
@@ -84,6 +91,8 @@ jobs:
           MEDIAFLICK_VERIFY_ISOLATION: macos-ci-runner
           MEDIAFLICK_DESKTOP_EXE: /Applications/MediaFlick Desktop.app/Contents/MacOS/mediaflick-desktop
           MEDIAFLICK_VERIFY_WINDOW_COUNT: ${{ runner.temp }}/window-count
+          MEDIAFLICK_VERIFY_POINTER: ${{ runner.temp }}/pointer
+          MEDIAFLICK_VERIFY_STEPS: ${{ inputs.steps }}
         run: |
           cp verify/platform-macos.mjs mfd/.claude/skills/verify-mediaflick/scripts/platform.mjs
           node mfd/.claude/skills/verify-mediaflick/scripts/session.mjs "$PWD/verify/mac-e2e.mjs" \
