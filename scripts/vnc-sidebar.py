@@ -118,6 +118,8 @@ def main() -> int:
             stdout=app_log, stderr=subprocess.STDOUT,
         )
         cdp = until(lambda: Cdp(PORT), "the app's CDP page in the tester session", 90)
+        until(lambda: cdp.eval("innerWidth > 0 && innerHeight > 0 && !!document.querySelector('#username')"), "the shown sign-in screen", 60)
+        time.sleep(1)
         screen = until(lambda: cdp.eval("JSON.stringify({ w: screen.width, h: screen.height, x: screenX, y: screenY, ow: outerWidth, oh: outerHeight, iw: innerWidth, ih: innerHeight, dpr: devicePixelRatio })"), "the window geometry")
         geometry = json.loads(screen)
         client.captureScreen(str(output / "01-app.png"))
@@ -151,7 +153,8 @@ def main() -> int:
         client.mouseMove(*to_screen(field["x"] + 20, field["y"] + field["height"] / 2))
         client.mousePress(1)
         client.pause(0.5)
-        client.type("demo")
+        for key in "demo":
+            client.keyPress(key)
         client.keyPress("enter")
         until(lambda: cdp.eval("JSON.stringify(location.pathname)") == '"/"' and cdp.eval("!!document.querySelector('[data-slot=\"sidebar\"]')"), "Home after sign-in", 60)
         movies = until(lambda: json.loads(cdp.eval("""JSON.stringify((() => { const link = [...document.querySelectorAll('[data-sidebar="menu-button"]')].find((b) => b.textContent.trim() === "Movies"); return link ? link.getBoundingClientRect() : null })())""")), "the Movies link", 60)
