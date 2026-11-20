@@ -73,7 +73,7 @@ func startPlayer() {
                    ("input-vo-keyboard", "no"), ("input-cursor", "no"), ("cursor-autohide", "no"),
                    ("title", "MediaFlick probe"), ("autofit", "70%"), ("border", "yes"),
                    ("keepaspect-window", "no"), ("auto-window-resize", "no"), ("osc", "no"),
-                   ("msg-level", "all=v"), ("log-file", "\(out)/mpv-\(mode).log"), ("geometry", "1280x720+0+0")] {
+                   ("msg-level", "all=v"), ("log-file", "\(out)/mpv-\(mode).log"), ("geometry", "1280x720+0+0")] + (ProcessInfo.processInfo.environment["PROBE_VO"].map { [("vo", $0)] } ?? []) {
         opt(k, v)
     }
     let r = mpv_initialize(handle)
@@ -116,8 +116,10 @@ Thread {
         mine.autoresizingMask = [.width, .height]
         mine.wantsLayer = true
         mine.layer?.backgroundColor = NSColor.clear.cgColor
-        content.addSubview(mine, positioned: .above, relativeTo: nil)
-        log("added app view above mpv: subviews now \(content.subviews.map { "\(type(of: $0))" })")
+        if mode != "noview" {
+            content.addSubview(mine, positioned: .above, relativeTo: nil)
+            log("added app view above mpv: subviews now \(content.subviews.map { "\(type(of: $0))" })")
+        }
     }
 
     _ = command(["loadfile", "av://lavfi:testsrc2=size=1280x720:rate=30"])

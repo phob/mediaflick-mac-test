@@ -38,12 +38,50 @@ jobs:
           swiftc -O -import-objc-header probe/bridge.h -I"$(brew --prefix)/include" -L"$(brew --prefix)/lib" -lmpv probe/probe.swift -o probe/probe
       - name: Make an H.264 sample
         run: ffmpeg -loglevel error -f lavfi -i testsrc2=size=1920x1080:rate=30 -t 5 -c:v libx264 -pix_fmt yuv420p "$RUNNER_TEMP/h264.mp4"
-      - name: Probe (main thread runs the run loop)
+      - name: mpv CLI, gpu-next (control)
+        continue-on-error: true
+        timeout-minutes: 2
+        run: mpv --no-config --vo=gpu-next --length=3 --msg-level=all=v av://lavfi:testsrc2=size=1280x720:rate=30 2>&1 | grep -iE "context|vo:|error|fail" | head -20
+      - name: mpv CLI, gpu (control)
+        continue-on-error: true
+        timeout-minutes: 2
+        run: mpv --no-config --vo=gpu --length=3 --msg-level=all=v av://lavfi:testsrc2=size=1280x720:rate=30 2>&1 | grep -iE "context|vo:|error|fail" | head -20
+      - name: Probe libmpv, no app view
+        continue-on-error: true
+        timeout-minutes: 3
+        run: probe/probe noview "$RUNNER_TEMP"
+      - name: Probe libmpv, app view above mpv
+        continue-on-error: true
+        timeout-minutes: 3
         run: probe/probe async "$RUNNER_TEMP"
+      - name: Probe libmpv vo=gpu, app view above mpv
+        continue-on-error: true
         timeout-minutes: 3
+        env: { PROBE_VO: gpu }
+        run: probe/probe async "$RUNNER_TEMP"
       - name: Probe (main thread blocks waiting for the window)
-        run: probe/probe block "$RUNNER_TEMP"
+        continue-on-error: true
         timeout-minutes: 3
+        run: probe/probe block "$RUNNER_TEMP"
+      - name: Crash reports
+        if: always()
+        run: |
+          for f in ~/Library/Logs/DiagnosticReports/*.ips /Library/Logs/DiagnosticReports/*.ips; do
+            [ -f "$f" ] || continue; echo "== $f"; cp "$f" "$RUNNER_TEMP/" 
+            python3 - "$f" <<'PY'
+          import json, sys
+          raw = open(sys.argv[1]).read().split('\n', 1)
+          d = json.loads(raw[1])
+          print(d.get('exception'), d.get('termination', {}).get('indicator'))
+          imgs = d.get('usedImages', [])
+          ft = d.get('faultingThread', 0)
+          th = d['threads'][ft]
+          print('faulting thread', ft, th.get('name'), th.get('queue'))
+          for fr in th['frames'][:25]:
+              img = imgs[fr['imageIndex']].get('name', '?') if fr.get('imageIndex') is not None and fr['imageIndex'] < len(imgs) else '?'
+              print('  ', img, fr.get('symbol', hex(fr.get('imageOffset', 0))))
+          PY
+          done
       - name: mpv log excerpts
         if: always()
         run: |
@@ -55,3 +93,4 @@ jobs:
           path: |
             ${{ runner.temp }}/*.png
             ${{ runner.temp }}/*.log
+            ${{ runner.temp }}/*.ips
