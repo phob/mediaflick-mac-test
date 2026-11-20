@@ -114,7 +114,7 @@ def main() -> int:
         uid = subprocess.run(["id", "-u", "tester"], capture_output=True, text=True, check=True).stdout.strip()
         app_log = open(output / "app-stdout.log", "w")
         app = subprocess.Popen(
-            ["sudo", "launchctl", "asuser", uid, "sudo", "-u", "tester", APP, "--remote-debugging-port", str(PORT), "--url", DEMO, "--log-level", "debug"],
+            ["sudo", "launchctl", "asuser", uid, "sudo", "-u", "tester", "-H", "env", "HOME=/Users/tester", "TMPDIR=/tmp", APP, "--remote-debugging-port", str(PORT), "--url", DEMO, "--log-level", "debug"],
             stdout=app_log, stderr=subprocess.STDOUT,
         )
         cdp = until(lambda: Cdp(PORT), "the app's CDP page in the tester session", 90)
