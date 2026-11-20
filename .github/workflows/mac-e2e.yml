@@ -1,0 +1,103 @@
+name: macOS end to end
+
+# Drives a MediaFlick build on a macOS runner the way a user does, against
+# Jellyfin's public demo server: sign-in, Home, a library, movie and series
+# pages, playback with External mpv (Homebrew), and Cmd+Q. Uses
+# MediaFlick-Desktop's verify-mediaflick session and harness, with
+# verify/platform-macos.mjs in place of its Windows/Linux platform layer.
+on:
+  workflow_dispatch:
+    inputs:
+      build_run_id:
+        description: Run id of a "macOS test session" run whose build-dmg artifact to test
+        type: string
+        required: true
+      ref:
+        description: MediaFlick Desktop ref whose verify-mediaflick harness to use
+        type: string
+        default: main
+
+permissions:
+  contents: read
+  actions: read # download the build_run_id run's DMG
+
+jobs:
+  e2e:
+    name: End to end
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - name: Check out this repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Check out the verify harness
+        uses: actions/checkout@v7
+        with:
+          repository: phob/MediaFlick-Desktop
+          ref: ${{ inputs.ref }}
+          path: mfd
+          persist-credentials: false
+          sparse-checkout: |
+            .claude/skills/verify-mediaflick
+            scripts/website
+
+      - name: Install Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 26
+
+      - name: Download the build
+        uses: actions/download-artifact@v8
+        with:
+          name: build-dmg
+          path: ${{ runner.temp }}/dmg
+          run-id: ${{ inputs.build_run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Install mpv
+        run: brew install mpv
+
+      - name: Install the app
+        run: |
+          dmg="$(find "$RUNNER_TEMP/dmg" -name "*.dmg" | head -1)"
+          echo "DMG: $(basename "$dmg")"
+          mount_point="$(mktemp -d)"
+          hdiutil attach -nobrowse -readonly -mountpoint "$mount_point" "$dmg" >/dev/null
+          ditto "$mount_point/MediaFlick Desktop.app" "/Applications/MediaFlick Desktop.app"
+          hdiutil detach "$mount_point" >/dev/null
+          "/Applications/MediaFlick Desktop.app/Contents/MacOS/mediaflick-desktop" --version
+          swiftc -O -o "$RUNNER_TEMP/window-count" scripts/window-count.swift
+
+      - name: Pick an mpv video output this VM survives
+        run: scripts/pick-mpv-vo.sh "$RUNNER_TEMP/evidence/mpv-vo"
+
+      - name: Drive the app
+        env:
+          MEDIAFLICK_VERIFY_ISOLATION: macos-ci-runner
+          MEDIAFLICK_DESKTOP_EXE: /Applications/MediaFlick Desktop.app/Contents/MacOS/mediaflick-desktop
+          MEDIAFLICK_VERIFY_WINDOW_COUNT: ${{ runner.temp }}/window-count
+        run: |
+          cp verify/platform-macos.mjs mfd/.claude/skills/verify-mediaflick/scripts/platform.mjs
+          node mfd/.claude/skills/verify-mediaflick/scripts/session.mjs "$PWD/verify/mac-e2e.mjs" \
+            --run-id "mac-e2e-$GITHUB_RUN_ID" --timeout 1800 \
+            --url https://demo.jellyfin.org/stable \
+            --log-level "debug,jellyfin.playstate=trace,playback=trace,mpv.ipc=debug"
+
+      - name: Check no MediaFlick or mpv process is left
+        if: always()
+        run: |
+          left="$(pgrep -lf 'mediaflick-desktop|MediaFlick Desktop Helper|/mpv ' || true)"
+          echo "${left:-none}"
+          [[ -z "$left" ]]
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: mac-e2e
+          path: |
+            mfd/build/verify
+            ${{ runner.temp }}/evidence
+          if-no-files-found: warn
