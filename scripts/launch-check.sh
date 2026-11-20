@@ -106,6 +106,8 @@ for dmg in "$@"; do
   hdiutil detach "$mount_point" >/dev/null
   echo "  version: $("$binary" --version 2>&1)" | tee -a "$summary"
   codesign -dv "$installed" 2>&1 | grep -E '^(Signature|TeamIdentifier|Identifier)' | sed 's/^/  /' | tee -a "$summary"
+  codesign --verify --deep --strict "$installed" > "$out/.codesign" 2>&1 && echo "  codesign --verify --deep --strict: ok" | tee -a "$summary" \
+    || sed 's/^/  codesign: /' "$out/.codesign" | tee -a "$summary"
   xattr -lr "$installed" 2>/dev/null | grep -c quarantine | sed 's/^/  quarantine xattrs: /' | tee -a "$summary"
 
   # 1. open, as from Finder.
