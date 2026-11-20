@@ -394,6 +394,7 @@ export default async function macE2e(ctx) {
       // AX lists the buttons even when AppKit hides them (run 44764304601),
       // so the proof is a real click on each one doing its job.
       pointer("press", appPid(), "minimize")
+      pointer("glide", 500, 400, 500, 400, 1, 200)
       await ctx.until(() => windowState().minimized === true, "the minimize button to minimize the window to the Dock", 10000)
       screen(ctx, "window-02-minimized-screen")
       ctx.check((await ctx.appExit(1000)) === null, "the app keeps running while minimized")
@@ -404,8 +405,13 @@ export default async function macE2e(ctx) {
       screen(ctx, "window-03-restored-screen")
 
       const before = windowState()
+      // Resting on the green button opens macOS's Move & Resize menu in a
+      // nested event loop that stalls the app until the pointer moves on
+      // (run 44788143307's stacks), so move on after each click, as a user does.
+      const moveOn = () => pointer("glide", 500, 400, 500, 400, 1, 200)
       if (zoom) {
       pointer("press", appPid(), "zoom")
+      moveOn()
       await ctx.until(() => {
         const now = windowState()
         return now.fullScreen === true || JSON.stringify(now.frame) !== JSON.stringify(before.frame) ? now : null
@@ -418,6 +424,7 @@ export default async function macE2e(ctx) {
         await ctx.until(() => windowState().fullScreen === false, "full screen to end", 10000)
       } else {
         pointer("press", appPid(), "zoom")
+        moveOn()
         await ctx.until(() => JSON.stringify(windowState().frame) === JSON.stringify(before.frame), "the zoom button to restore the frame", 10000)
       }
       await ctx.sleep(1500)
