@@ -70,8 +70,14 @@ jobs:
           "/Applications/MediaFlick Desktop.app/Contents/MacOS/mediaflick-desktop" --version
           swiftc -O -o "$RUNNER_TEMP/window-count" scripts/window-count.swift
 
+      # Probing crashes mpv on purpose; keep macOS's "quit unexpectedly"
+      # dialogs off the screen the drive's screenshots show.
       - name: Pick an mpv video output this VM survives
-        run: scripts/pick-mpv-vo.sh "$RUNNER_TEMP/evidence/mpv-vo"
+        run: |
+          defaults write com.apple.CrashReporter DialogType none
+          scripts/pick-mpv-vo.sh "$RUNNER_TEMP/evidence/mpv-vo"
+          mkdir -p "$RUNNER_TEMP/evidence/mpv-vo/crash-reports"
+          find "$HOME/Library/Logs/DiagnosticReports" -name 'mpv*' -exec cp {} "$RUNNER_TEMP/evidence/mpv-vo/crash-reports/" \;
 
       - name: Drive the app
         env:

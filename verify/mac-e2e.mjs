@@ -48,6 +48,24 @@ function screen(ctx, name) {
   }
 }
 
+// A real-mouse click through CDP whose events may go unacknowledged: on this
+// runner, opening the player bar's overflow menu left CEF's answer to the
+// click pending forever (run 44646986594), although the menu opened and the
+// app kept running. Each event gets 5 s; a missing answer is recorded, and the
+// caller checks the click's effect itself.
+const lostAcks = []
+async function click(ctx, target) {
+  const { rect } = await ctx.find(target, { timeout: 15000 })
+  ctx.step(`click ${JSON.stringify(target)} at (${Math.round(rect.x)},${Math.round(rect.y)})`)
+  for (const params of [{ type: "mouseMoved", button: "none" }, { type: "mousePressed", button: "left", clickCount: 1 }, { type: "mouseReleased", button: "left", clickCount: 1 }]) {
+    const answered = await Promise.race([ctx.app.send("Input.dispatchMouseEvent", { x: rect.x, y: rect.y, ...params }).then(() => true), ctx.sleep(5000).then(() => false)])
+    if (!answered) {
+      lostAcks.push({ target, event: params.type })
+      ctx.step(`no CDP answer to ${params.type} within 5 s`)
+    }
+  }
+}
+
 async function search(ctx, term, title) {
   await ctx.park()
   if ((await ctx.pathname()) !== "/") await ctx.hover({ css: '[data-sidebar="sidebar"]' })
@@ -136,8 +154,9 @@ async function playTitle(ctx, label, open) {
   if (await ctx.exists(BAR("Stop"))) {
     await ctx.press(BAR("Stop"))
   } else {
-    await ctx.press(BAR("More playback controls"))
-    await ctx.press({ role: "menuitem", name: "Stop playback" })
+    await click(ctx, BAR("More playback controls"))
+    await ctx.find({ role: "menuitem", name: "Stop playback" }, { timeout: 10000 })
+    await click(ctx, { role: "menuitem", name: "Stop playback" })
   }
   await ctx.until(async () => !(await ctx.player())?.active, "playback to stop", 30000)
   await ctx.until(async () => !(await ctx.exists({ css: "footer.player-bar" })), "the player bar to go away", 10000)
@@ -227,6 +246,7 @@ export default async function macE2e(ctx) {
       if (report) summary.playback.push(report)
     }
     summary.mpvIpcConnections = (ctx.appLog().match(/mpv IPC connected/g) ?? []).length
+    summary.lostCdpAcks = lostAcks
 
     // A real Cmd+Q from the keyboard (System Events), as a user quits.
     await record(ctx, "quit-cmd-q", async () => {
