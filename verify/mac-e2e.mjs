@@ -8,7 +8,7 @@
 // Playback writes the shared demo user's playstate: a title that started
 // unplayed is marked watched and unwatched afterwards, which clears the
 // resume point this drive left.
-import { execFileSync } from "node:child_process"
+import { execFileSync, spawn } from "node:child_process"
 import path from "node:path"
 
 const MOVIE = "Night of the Living Dead"
@@ -385,7 +385,8 @@ export default async function macE2e(ctx) {
     // The window's title bar buttons, used with the real mouse: minimize and
     // restore from the Dock, zoom, and a moved and resized frame that comes
     // back after a relaunch.
-    if (wanted("window-chrome")) await record(ctx, "window-chrome", async () => {
+    if (wanted("window-chrome") || wanted("window-chrome-nozoom")) await record(ctx, "window-chrome", async () => {
+      const zoom = !wanted("window-chrome-nozoom")
       await front(ctx)
       const report = { trusted: pointer("trusted") }
       report.initial = windowState()
@@ -403,6 +404,7 @@ export default async function macE2e(ctx) {
       screen(ctx, "window-03-restored-screen")
 
       const before = windowState()
+      if (zoom) {
       pointer("press", appPid(), "zoom")
       await ctx.until(() => {
         const now = windowState()
@@ -420,11 +422,16 @@ export default async function macE2e(ctx) {
       }
       await ctx.sleep(1500)
       report.unzoomed = windowState()
+      }
 
       const frame = [40, 60, 900, 600]
       pointer("set", appPid(), "frame", ...frame)
       await ctx.until(() => JSON.stringify(windowState().frame) === JSON.stringify(frame), `the window moved and resized to ${frame}`, 10000)
       await ctx.sleep(1000)
+      // If the close hangs, record where: process states and stacks of the
+      // app and its mpv while it hangs.
+      const diagnostics = path.join(ctx.evidence, "close-diagnostics.txt")
+      spawn("sh", ["-c", `sleep 8; { date; ps -axo pid,ppid,stat,etime,command | grep -iE 'mediaflick|mpv' | grep -v grep; for p in $(pgrep -x mpv) $(pgrep -x mediaflick-desktop); do echo "== sample $p"; sample $p 2 -mayDie 2>&1 | head -150; done; } > "${diagnostics}" 2>&1`], { detached: true, stdio: "ignore" }).unref()
       await ctx.relaunch()
       await ctx.until(() => { try { return windowState().frame } catch { return null } }, "the relaunched window", 30000)
       report.saved = ctx.readConfig("settings.json")?.webui_window ?? null
