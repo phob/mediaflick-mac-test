@@ -22,7 +22,7 @@ on:
         default: macos-15
         options: [macos-15, macos-26]
       steps:
-        description: Comma-separated steps after sign-in (home, library, movie-detail, series-detail, sidebar-hover, window-chrome, playback, quit-cmd-q, quit-close-button); empty runs all but quit-close-button
+        description: Comma-separated steps after sign-in (home, library, movie-detail, series-detail, sidebar-hover, window-chrome, playback, quit-cmd-q, quit-close-button, and vnc-sidebar-hover for the Screen Sharing job); empty runs all but quit-close-button and vnc-sidebar-hover
         type: string
         default: ""
 
@@ -33,6 +33,7 @@ permissions:
 jobs:
   e2e:
     name: End to end
+    if: ${{ inputs.steps != 'vnc-sidebar-hover' }}
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 60
     steps:
@@ -120,4 +121,60 @@ jobs:
           path: |
             mfd/build/verify
             ${{ runner.temp }}/evidence
+          if-no-files-found: warn
+
+  # The sidebar hover check over Screen Sharing, as the operator drove it: the
+  # app in the tester account's own session, the pointer moved over VNC.
+  vnc-sidebar:
+    name: Sidebar hover over Screen Sharing
+    if: ${{ contains(inputs.steps, 'vnc-sidebar-hover') }}
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 30
+    steps:
+      - name: Check out this repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Choose a throwaway tester password
+        run: |
+          password="$(openssl rand -base64 48 | tr -dc 'A-Za-z0-9' | head -c 24)"
+          echo "::add-mask::$password"
+          echo "MAC_PASSWORD=$password" >> "$GITHUB_ENV"
+
+      - name: Download the build
+        uses: actions/download-artifact@v8
+        with:
+          name: build-dmg
+          path: ${{ runner.temp }}/dmg
+          run-id: ${{ inputs.build_run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Install the app
+        run: |
+          dmg="$(find "$RUNNER_TEMP/dmg" -name "*.dmg" | head -1)"
+          echo "DMG: $(basename "$dmg")"
+          mount_point="$(mktemp -d)"
+          hdiutil attach -nobrowse -readonly -mountpoint "$mount_point" "$dmg" >/dev/null
+          ditto "$mount_point/MediaFlick Desktop.app" "/Applications/MediaFlick Desktop.app"
+          hdiutil detach "$mount_point" >/dev/null
+
+      - name: Create the tester account
+        run: scripts/create-test-user.sh
+
+      - name: Turn on Screen Sharing
+        run: scripts/enable-screen-sharing.sh
+
+      - name: Hover the sidebar over VNC
+        run: |
+          python3 -m venv "$RUNNER_TEMP/vnc"
+          "$RUNNER_TEMP/vnc/bin/pip" install --quiet --disable-pip-version-check vncdotool==1.4.2 pillow==13.0.0 websocket-client==1.9.0
+          "$RUNNER_TEMP/vnc/bin/python" -W ignore scripts/vnc-sidebar.py "$RUNNER_TEMP/vnc-sidebar"
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: vnc-sidebar
+          path: ${{ runner.temp }}/vnc-sidebar
           if-no-files-found: warn
