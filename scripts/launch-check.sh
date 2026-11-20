@@ -8,6 +8,9 @@
 # opened app is then quit with the quit Apple event (the Dock's Quit) and the
 # shell-started one with Cmd+Q; each must take MediaFlick's orderly exit (its
 # log says "exit requested") and end by itself, the shell one with status 0.
+#   4. run the inner binary with an accounts.json from a newer release, so the
+#      services refuse to open and the startup error screen shows; Cmd+Q must
+#      still take the orderly exit (the window closes) and exit with status 0.
 # Crash reports, app logs, stdout/stderr and screenshots land in OUT.
 # Runs as the logged-in runner account, which owns the console GUI session.
 # Usage: launch-check.sh OUT DMG...
@@ -131,6 +134,23 @@ for dmg in "$@"; do
     echo "  direct, quit by Cmd+Q: FAIL - the process did not exit with status 0" | tee -a "$summary"
     failures=$((failures + 1))
   fi
+  collect "$dir"
+
+  # 4. The startup error screen (services down), quit with Cmd+Q.
+  dir="$out/$name/services-down"; mkdir -p "$dir"; touch "$dir/.start"
+  rm -rf "$data"; mkdir -p "$data"
+  echo '{ "version": 999, "accounts": [] }' > "$data/accounts.json"
+  ( cd "$installed/Contents/MacOS" && ./mediaflick-desktop > "$dir/stdout.txt" 2> "$dir/stderr.txt"; echo "exit status $?" > "$dir/exit.txt" ) &
+  sleep "$wait_seconds"
+  quit_status=1
+  judge "  services down" "$dir" && quit_check "  services down, quit by Cmd+Q" cmd-q "$dir" && quit_status=0
+  stop_app; wait
+  sed 's/^/  /' "$dir/exit.txt" | tee -a "$summary"
+  if (( quit_status == 0 )) && [[ "$(cat "$dir/exit.txt")" != "exit status 0" ]]; then
+    echo "  services down, quit by Cmd+Q: FAIL - the process did not exit with status 0" | tee -a "$summary"
+    failures=$((failures + 1))
+  fi
+  grep -m1 -iE 'services (failed|could not|refused)|newer' "$data/mediaflick-desktop.log" 2>/dev/null | cut -c1-200 | sed 's/^/  log: /' | tee -a "$summary"
   collect "$dir"
 
   # 3. Under lldb, for a symbolic backtrace of any crash.
