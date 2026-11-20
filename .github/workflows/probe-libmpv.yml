@@ -1,0 +1,57 @@
+name: probe libmpv macOS
+on:
+  push:
+    branches: [probe/libmpv-macos]
+jobs:
+  probe:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install mpv
+        run: brew install mpv
+      - name: Inspect Homebrew libmpv
+        run: |
+          lib=$(brew --prefix mpv)/lib/libmpv.2.dylib
+          ls -l "$lib"; vtool -show-build "$lib" | grep -E 'minos|platform' || true
+          otool -L "$lib" | head -60
+          python3 - "$lib" <<'PY'
+          import subprocess, sys
+          seen, todo = set(), [sys.argv[1]]
+          while todo:
+              p = todo.pop()
+              if p in seen: continue
+              seen.add(p)
+              for line in subprocess.run(['otool','-L',p],capture_output=True,text=True).stdout.splitlines()[1:]:
+                  d = line.strip().split(' (')[0]
+                  if d.startswith('/opt/homebrew') or d.startswith('@'):
+                      todo.append(d.replace('@rpath', '/opt/homebrew/lib') if d.startswith('@rpath') else d)
+          hb = sorted(s for s in seen if s.startswith('/opt/homebrew'))
+          import os
+          print(f"Homebrew dylib closure: {len(hb)} files, {sum(os.path.getsize(os.path.realpath(s)) for s in hb if os.path.exists(s))/1e6:.1f} MB")
+          for s in hb: print('  ', s)
+          PY
+          brew info --json=v2 ffmpeg | python3 -c 'import json,sys; f=json.load(sys.stdin)["formulae"][0]; print("ffmpeg license:", f["license"])'
+          system_profiler SPDisplaysDataType | head -30
+      - name: Build probe
+        run: |
+          swiftc -O -import-objc-header probe/bridge.h -I"$(brew --prefix)/include" -L"$(brew --prefix)/lib" -lmpv probe/probe.swift -o probe/probe
+      - name: Make an H.264 sample
+        run: ffmpeg -loglevel error -f lavfi -i testsrc2=size=1920x1080:rate=30 -t 5 -c:v libx264 -pix_fmt yuv420p "$RUNNER_TEMP/h264.mp4"
+      - name: Probe (main thread runs the run loop)
+        run: probe/probe async "$RUNNER_TEMP"
+        timeout-minutes: 3
+      - name: Probe (main thread blocks waiting for the window)
+        run: probe/probe block "$RUNNER_TEMP"
+        timeout-minutes: 3
+      - name: mpv log excerpts
+        if: always()
+        run: |
+          for f in "$RUNNER_TEMP"/mpv-*.log; do echo "== $f"; grep -iE 'gpu|vulkan|moltenvk|macvk|metal|hwdec|videotoolbox|error|overlay|swapchain' "$f" | head -60; done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: probe-output
+          path: |
+            ${{ runner.temp }}/*.png
+            ${{ runner.temp }}/*.log
