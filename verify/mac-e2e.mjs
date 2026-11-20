@@ -438,8 +438,10 @@ export default async function macE2e(ctx) {
       // If the close hangs, record where: process states and stacks of the
       // app and its mpv while it hangs.
       const diagnostics = path.join(ctx.evidence, "close-diagnostics.txt")
-      spawn("sh", ["-c", `sleep 8; { date; ps -axo pid,ppid,stat,etime,command | grep -iE 'mediaflick|mpv' | grep -v grep; for p in $(pgrep -x mpv) $(pgrep -x mediaflick-desktop); do echo "== sample $p"; sample $p 2 -mayDie 2>&1 | head -150; done; } > "${diagnostics}" 2>&1`], { detached: true, stdio: "ignore" }).unref()
+      const watcher = spawn("sh", ["-c", `sleep 8; { date; ps -axo pid,ppid,stat,etime,command | grep -iE 'mediaflick|mpv' | grep -v grep; for p in $(pgrep -x mpv) $(pgrep -x mediaflick-desktop); do echo "== sample $p"; sample $p 2 -mayDie 2>&1 | head -150; done; } > "${diagnostics}" 2>&1`], { detached: true, stdio: "ignore" })
+      watcher.unref()
       await ctx.relaunch()
+      watcher.kill()
       await ctx.until(() => { try { return windowState().frame } catch { return null } }, "the relaunched window", 30000)
       report.saved = ctx.readConfig("settings.json")?.webui_window ?? null
       report.relaunched = windowState()
