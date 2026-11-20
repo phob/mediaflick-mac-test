@@ -343,7 +343,22 @@ export default async function macE2e(ctx) {
         pointer("glide", origin.x + iconX, origin.y + bottom, origin.x + textX, origin.y + bottom, 20, 15)
         pointer("glide", origin.x + textX, origin.y + bottom, origin.x + textX, origin.y + top, Math.round(bottom - top), 20)
       }))
+      // A hand's irregular, jittery, fractional movement, down the icons and
+      // up the labels.
+      passes.push(await hoverPass(ctx, "real-hand-down-icons", async () => pointer("hand", origin.x + iconX, origin.y + top, origin.x + iconX, origin.y + bottom)))
+      passes.push(await hoverPass(ctx, "real-hand-up-labels", async () => pointer("hand", origin.x + iconX, origin.y + bottom, origin.x + textX, origin.y + top)))
       screen(ctx, "sidebar-02-after-real-passes-screen")
+      // With another app in front: the pointer hovers MediaFlick's window
+      // without it being the key window.
+      execFileSync("osascript", ["-e", 'tell application "Finder" to activate'])
+      await ctx.sleep(1500)
+      pointer("glide", origin.x + textX, origin.y + top, away.x, away.y, 30, 15)
+      await ctx.until(async () => (await sidebarState(ctx)) === "collapsed", "the sidebar collapsed behind Finder", 5000).catch(() => ctx.step("the sidebar did not collapse behind Finder"))
+      pointer("glide", away.x, away.y, origin.x + iconX, origin.y + top, 40, 15)
+      await ctx.until(async () => (await sidebarState(ctx)) === "expanded", "the sidebar expanded under the pointer behind Finder", 5000).catch(() => ctx.step("the sidebar did not expand behind Finder"))
+      passes.push(await hoverPass(ctx, "real-inactive-hand-down-icons", async () => pointer("hand", origin.x + iconX, origin.y + top, origin.x + iconX, origin.y + bottom)))
+      screen(ctx, "sidebar-03-inactive-screen")
+      await front(ctx)
 
       // The same path through CDP, which reaches the renderer without AppKit.
       passes.push(await hoverPass(ctx, "cdp-down-icons", async () => {
@@ -354,6 +369,10 @@ export default async function macE2e(ctx) {
       }))
       pointer("glide", origin.x + iconX, origin.y + bottom, away.x, away.y, 30, 15)
       await ctx.until(async () => (await sidebarState(ctx)) === "collapsed", "the sidebar collapsed once the pointer left it")
+      report_env: {
+        const env = await ctx.app.evaluate(`JSON.stringify({ dpr: devicePixelRatio, ua: navigator.userAgent, hasFocus: document.hasFocus() })`)
+        ctx.step(`page: ${env}; macOS ${execFileSync("sw_vers", ["-productVersion"], { encoding: "utf8" }).trim()}`)
+      }
 
       const report = { origin, rows, iconX, textX, top, bottom, passes }
       ctx.writeEvidence("sidebar-hover.json", report)
@@ -371,11 +390,10 @@ export default async function macE2e(ctx) {
       const report = { trusted: pointer("trusted") }
       report.initial = windowState()
       screen(ctx, "window-01-title-bar-screen")
-      const missing = ["close", "minimize", "zoom"].filter((key) => !report.initial[key].exists || !report.initial[key].enabled)
-      ctx.check(missing.length === 0, `the window has enabled close, minimize and zoom buttons${missing.length ? `; missing or disabled: ${missing.join(", ")}` : ""}`)
-
+      // AX lists the buttons even when AppKit hides them (run 44764304601),
+      // so the proof is a real click on each one doing its job.
       pointer("press", appPid(), "minimize")
-      await ctx.until(() => windowState().minimized === true, "the window minimized to the Dock", 10000)
+      await ctx.until(() => windowState().minimized === true, "the minimize button to minimize the window to the Dock", 10000)
       screen(ctx, "window-02-minimized-screen")
       ctx.check((await ctx.appExit(1000)) === null, "the app keeps running while minimized")
       pointer("set", appPid(), "minimized", "false")
@@ -389,7 +407,7 @@ export default async function macE2e(ctx) {
       await ctx.until(() => {
         const now = windowState()
         return now.fullScreen === true || JSON.stringify(now.frame) !== JSON.stringify(before.frame) ? now : null
-      }, "the zoom button to change the window", 10000)
+      }, "the zoom button to zoom the window or make it full screen", 10000)
       await ctx.sleep(1500)
       report.zoomed = windowState()
       screen(ctx, "window-04-zoomed-screen")

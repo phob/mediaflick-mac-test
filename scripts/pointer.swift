@@ -6,6 +6,7 @@
 //   pointer trusted                       is this process trusted for Accessibility
 //   pointer bounds PID                    the app's on-screen layer-0 window frames (JSON, points, top-left origin)
 //   pointer glide X1 Y1 X2 Y2 STEPS MS    move the mouse in STEPS steps, MS ms apart, ending at X2 Y2
+//   pointer hand X1 Y1 X2 Y2              move the mouse as a slow hand does: irregular 60 Hz steps with jitter
 //   pointer click X Y                     left click at X Y
 //   pointer window PID                    the main window's AX state and its title bar buttons (JSON)
 //   pointer press PID close|minimize|zoom click that title bar button with the real mouse
@@ -72,8 +73,8 @@ func button(_ window: AXUIElement, _ name: String) -> [String: Any] {
     let element = raw as! AXUIElement
     var info: [String: Any] = ["exists": true, "enabled": (attribute(element, kAXEnabledAttribute) as? Bool) ?? false]
     if let origin = point(element, kAXPositionAttribute), let extent = size(element, kAXSizeAttribute) {
-        info["frame"] = [origin.x, origin.y, extent.width, extent.height]
-        info["center"] = [origin.x + extent.width / 2, origin.y + extent.height / 2]
+        info["frame"] = [Double(origin.x), Double(origin.y), Double(extent.width), Double(extent.height)]
+        info["center"] = [Double(origin.x + extent.width / 2), Double(origin.y + extent.height / 2)]
     }
     return info
 }
@@ -89,7 +90,7 @@ func windowState(_ pid: pid_t) -> [String: Any] {
         "fullScreen": (attribute(window, "AXFullScreen") as? Bool) ?? NSNull(),
     ]
     if let origin = point(window, kAXPositionAttribute), let extent = size(window, kAXSizeAttribute) {
-        state["frame"] = [origin.x, origin.y, extent.width, extent.height]
+        state["frame"] = [Double(origin.x), Double(origin.y), Double(extent.width), Double(extent.height)]
     }
     for (key, name) in buttons { state[key] = button(window, name) }
     return state
@@ -119,6 +120,23 @@ case "glide":
         post(.mouseMoved, CGPoint(x: x1 + (x2 - x1) * t, y: y1 + (y2 - y1) * t))
         usleep(useconds_t(ms * 1000))
     }
+case "hand":
+    // A hand's slow drag: 60 Hz events, 0.2 to 2.5 pt apart with sideways
+    // jitter of up to 1.5 pt, and fractional positions, to X2 Y2.
+    let (x1, y1, x2, y2) = (number(2), number(3), number(4), number(5))
+    var generator = SystemRandomNumberGenerator()
+    var (x, y) = (x1, y1)
+    let length = max(1, hypot(x2 - x1, y2 - y1))
+    var travelled = 0.0
+    while travelled < length {
+        travelled = min(length, travelled + Double.random(in: 0.2...2.5, using: &generator))
+        let t = travelled / length
+        x = x1 + (x2 - x1) * t + Double.random(in: -1.5...1.5, using: &generator)
+        y = y1 + (y2 - y1) * t
+        post(.mouseMoved, CGPoint(x: x, y: y))
+        usleep(16_667)
+    }
+    post(.mouseMoved, CGPoint(x: x2, y: y2))
 case "click":
     click(CGPoint(x: number(2), y: number(3)))
 case "window":

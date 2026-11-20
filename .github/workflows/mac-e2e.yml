@@ -16,6 +16,11 @@ on:
         description: MediaFlick Desktop ref whose verify-mediaflick harness to use
         type: string
         default: main
+      runner:
+        description: macOS runner image
+        type: choice
+        default: macos-15
+        options: [macos-15, macos-26]
       steps:
         description: Comma-separated steps after sign-in (home, library, movie-detail, series-detail, sidebar-hover, window-chrome, playback, quit-cmd-q, quit-close-button); empty runs all but quit-close-button
         type: string
@@ -28,7 +33,7 @@ permissions:
 jobs:
   e2e:
     name: End to end
-    runs-on: macos-15
+    runs-on: ${{ inputs.runner }}
     timeout-minutes: 60
     steps:
       - name: Check out this repository
