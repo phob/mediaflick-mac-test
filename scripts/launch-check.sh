@@ -4,7 +4,10 @@
 #   1. `open` the installed app (Finder / Launchpad / Dock path),
 #   2. run the inner binary from a shell (what the operator did in Terminal),
 #   3. run the inner binary under lldb and keep the crashing backtrace.
-# Each launch must still be running after WAIT seconds and own a window.
+# Each launch must still be running after WAIT seconds and own a window. The
+# opened app is then quit with the quit Apple event (the Dock's Quit) and the
+# shell-started one with Cmd+Q; each must take MediaFlick's orderly exit (its
+# log says "exit requested") and end by itself, the shell one with status 0.
 # Crash reports, app logs, stdout/stderr and screenshots land in OUT.
 # Runs as the logged-in runner account, which owns the console GUI session.
 # Usage: launch-check.sh OUT DMG...
@@ -48,15 +51,40 @@ judge() {
   pid="$(main_pid)"
   if [[ -z "$pid" ]]; then
     echo "$label: FAIL - no MediaFlick process after ${wait_seconds}s" | tee -a "$summary"
-    failures=$((failures + 1)); return
+    failures=$((failures + 1)); return 1
   fi
   windows="$("$out/.window-count" "$pid")"
   screencapture -x "$dir/screen.png" 2>/dev/null
   if (( windows < 1 )); then
     echo "$label: FAIL - pid $pid running but owns no on-screen window" | tee -a "$summary"
-    failures=$((failures + 1)); return
+    failures=$((failures + 1)); return 1
   fi
   echo "$label: PASS - pid $pid running with $windows window(s) after ${wait_seconds}s" | tee -a "$summary"
+}
+
+# Asks the running app to quit (HOW: apple-event or cmd-q) and checks that it
+# takes the orderly exit and ends by itself within 30 seconds.
+quit_check() {
+  local label="$1" how="$2" dir="$3" bundle_id waited=0
+  bundle_id="$(defaults read "$installed/Contents/Info" CFBundleIdentifier)"
+  case "$how" in
+    apple-event)
+      with_timeout 30 osascript -e "tell application id \"$bundle_id\" to quit" > "$dir/quit.txt" 2>&1 ;;
+    cmd-q)
+      with_timeout 30 osascript -e "tell application id \"$bundle_id\" to activate" -e 'delay 2' \
+        -e 'tell application "System Events" to keystroke "q" using command down' > "$dir/quit.txt" 2>&1 ;;
+  esac
+  echo "osascript exit $?" >> "$dir/quit.txt"
+  while [[ -n "$(main_pid)" ]] && (( waited < 30 )); do sleep 1; waited=$((waited + 1)); done
+  if [[ -n "$(main_pid)" ]]; then
+    echo "$label: FAIL - still running 30s after the quit request ($(tr '\n' ' ' < "$dir/quit.txt"))" | tee -a "$summary"
+    failures=$((failures + 1)); return 1
+  fi
+  if ! grep -q 'exit requested' "$data/mediaflick-desktop.log" 2>/dev/null; then
+    echo "$label: FAIL - ended after ${waited}s without the orderly exit (no \"exit requested\" in the log)" | tee -a "$summary"
+    failures=$((failures + 1)); return 1
+  fi
+  echo "$label: PASS - orderly exit logged, process ended after ${waited}s" | tee -a "$summary"
 }
 
 collect() {
@@ -85,7 +113,7 @@ for dmg in "$@"; do
   rm -rf "$data"; stop_app
   open -n "$installed" --stdout "$dir/stdout.txt" --stderr "$dir/stderr.txt"
   sleep "$wait_seconds"
-  judge "  open" "$dir"
+  judge "  open" "$dir" && quit_check "  open, quit by Apple event" apple-event "$dir"
   stop_app; collect "$dir"
 
   # 2. The inner binary from a shell, as the operator ran it.
@@ -93,9 +121,14 @@ for dmg in "$@"; do
   rm -rf "$data"
   ( cd "$installed/Contents/MacOS" && ./mediaflick-desktop > "$dir/stdout.txt" 2> "$dir/stderr.txt"; echo "exit status $?" > "$dir/exit.txt" ) &
   sleep "$wait_seconds"
-  judge "  direct" "$dir"
+  quit_status=1
+  judge "  direct" "$dir" && quit_check "  direct, quit by Cmd+Q" cmd-q "$dir" && quit_status=0
   stop_app; wait
   sed 's/^/  /' "$dir/exit.txt" | tee -a "$summary"
+  if (( quit_status == 0 )) && [[ "$(cat "$dir/exit.txt")" != "exit status 0" ]]; then
+    echo "  direct, quit by Cmd+Q: FAIL - the process did not exit with status 0" | tee -a "$summary"
+    failures=$((failures + 1))
+  fi
   collect "$dir"
 
   # 3. Under lldb, for a symbolic backtrace of any crash.
