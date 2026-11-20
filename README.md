@@ -140,7 +140,24 @@ place of its Windows and Linux platform layer. It runs the drive
   pause and resume, seeking past Jellyfin's resume minimum, Stop from the
   bar's menu, the Stopped report Jellyfin accepted (204), and Resume offered
   on the title's page;
-- a real Cmd+Q, which must exit with status 0 through the orderly exit.
+- `sidebar-hover`: off Home, the real mouse (`scripts/pointer.swift`, CGEvents
+  through the window server) moves slowly down the collapsed-then-expanded
+  sidebar and back up, also jittery and with another app in front; the
+  sidebar must never collapse while the pointer is on it;
+- `window-chrome`: real clicks on the title bar's minimize and zoom buttons,
+  restore from the Dock, and a moved and resized window that a relaunch
+  brings back at the same frame;
+- a real Cmd+Q, which must exit with status 0 through the orderly exit, or,
+  with `steps` naming `quit-close-button`, a click on the window's close
+  button, which must do the same.
+
+Inputs: `steps` runs only the named steps after sign-in (see the input's
+description); `runner` picks `macos-15` or `macos-26`. `steps:
+vnc-sidebar-hover` instead runs `scripts/vnc-sidebar.py`: the app in the
+`tester` account's own session, signed in and hovered over Screen Sharing
+(VNC), the way the operator drives the test session. Over Screen Sharing
+every pointer move reaches the app as a leave of the window and an entry at
+the real position (run 44769479069), which direct CGEvents never produce.
 
 `scripts/pick-mpv-vo.sh` first tries mpv video outputs on the VM and writes
 the first that survives to the runner's `~/.config/mpv/mpv.conf`. Every step's
