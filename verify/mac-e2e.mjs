@@ -66,6 +66,17 @@ async function click(ctx, target) {
   }
 }
 
+// External mpv goes fullscreen in its own Space and covers the app window.
+// macOS then stops the hidden window's frames, and CDP input waits for a
+// frame that never comes (runs 44646986594 and 44651423968 stalled 28 min on
+// the bar's overflow menu until a CDP screenshot forced one). A user switches
+// back to MediaFlick to use its player bar; so does the drive.
+async function front(ctx) {
+  execFileSync("osascript", ["-e", 'tell application id "io.github.phob.mediaflick-desktop" to activate'])
+  await ctx.sleep(2500)
+  ctx.step("brought MediaFlick to the front")
+}
+
 async function search(ctx, term, title) {
   await ctx.park()
   if ((await ctx.pathname()) !== "/") await ctx.hover({ css: '[data-sidebar="sidebar"]' })
@@ -114,6 +125,8 @@ async function playTitle(ctx, label, open) {
   report.mpv = { vo: await ctx.mpv("current-vo").catch((e) => `error: ${e.message}`), hwdec: await ctx.mpv("hwdec-current").catch(() => null), timePos: [t1, t2] }
   await ctx.screenshot(`${label}-02-playing`)
   screen(ctx, `${label}-02-playing-screen`)
+  await front(ctx)
+  screen(ctx, `${label}-02b-app-in-front-screen`)
 
   // Pause and resume from the bar.
   await ctx.press(BAR("Pause"))
